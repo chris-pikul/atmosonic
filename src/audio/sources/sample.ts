@@ -1,12 +1,12 @@
 import { type Accessor, type Signal, createRoot, createSignal } from 'solid-js';
 import type { Source } from './source';
 
-export abstract class SampleSource implements Source {
+export abstract class SampleSource<P extends object> implements Source {
     protected context: AudioContext;
-    protected destination: AudioNode | null = null;
+    protected gain: GainNode;
     protected node?: AudioBufferSourceNode;
     protected buffer?: AudioBuffer;
-    protected dispose?: () => void;
+    abstract readonly params: P;
 
     // @ts-expect-error - initialized in constructor
     protected _isLoaded: Signal<boolean>;
@@ -16,8 +16,12 @@ export abstract class SampleSource implements Source {
     protected _startTime = 0;
     protected _pauseTime = 0;
 
+    protected dispose?: () => void;
+
     constructor(context: AudioContext) {
         this.context = context;
+        this.gain = this.context.createGain();
+        this.gain.gain.value = 1.0;
 
         this.dispose = createRoot((dispose) => {
             this._isLoaded = createSignal(false);
@@ -48,10 +52,11 @@ export abstract class SampleSource implements Source {
     }
 
     connect(target: AudioNode) {
-        this.destination = target;
+        this.gain.connect(target);
     }
 
     disconnect() {
+        this.gain.disconnect();
         if (this.node) {
             try {
                 this.node?.stop();
@@ -59,21 +64,20 @@ export abstract class SampleSource implements Source {
             this.node?.disconnect();
             this.node = undefined;
         }
-        this.destination = null;
     }
 
     play(start: number = 0, offset: number = 0): void {
-        if (!this.buffer || !this.destination) return;
+        if (!this.buffer) return;
+
         const src = this.context.createBufferSource();
         src.buffer = this.buffer;
-        this.beforePlay(src);
-        src.connect(this.destination);
+        src.connect(this.gain);
         src.start(start, offset);
+
         this.node = src;
         this._startTime = this.context.currentTime;
         this._isPlaying[1](true);
     }
-    abstract beforePlay(node: AudioBufferSourceNode): void;
 
     pause(): void {
         if (!this.node) return;
@@ -109,6 +113,5 @@ export abstract class SampleSource implements Source {
         this.disconnect();
         this.dispose?.();
         this.buffer = undefined;
-        this.destination = null;
     }
 }

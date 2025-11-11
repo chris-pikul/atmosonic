@@ -144,11 +144,11 @@ export class Track {
         this.source?.destroy();
 
         const src = new LoopSampleSource(this.context);
+        src.connect(this.panNode);
+        this.source = src;
+
         src.load(url)
-            .then(() => {
-                src.connect(this.panNode);
-                this.source = src;
-            })
+            .then(() => {})
             .catch((error) => {
                 console.error(`Error loading loop sample for track ${this.name}:`, error);
             });

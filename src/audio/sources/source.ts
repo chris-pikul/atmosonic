@@ -1,10 +1,11 @@
 import type { Accessor } from 'solid-js';
 
-export interface Source {
+export interface Source<P extends object = object> {
+    readonly params: P;
+
     connect(target: AudioNode): void;
     disconnect(): void;
     play(start?: number): void;
-    beforePlay(node: AudioBufferSourceNode): void;
     pause(): void;
     resume(start?: number): void;
     stop(): void;

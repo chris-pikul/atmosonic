@@ -155,6 +155,7 @@ class AudioEngine {
     createTrack(id?: string) {
         id = id ?? `track-${this._trackId++}`;
         const track = new Track(this.context, id);
+        track.setLoopSample('/audio/samples/lovebird-chirp.wav');
         return this.addTrack(track);
     }
 
