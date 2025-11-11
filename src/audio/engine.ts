@@ -1,18 +1,18 @@
-import { createEffect, createRoot, createSignal } from 'solid-js';
-import { Track, type TrackJSON } from './track';
+import { Parameter, PolarParam, StringParam, UnitParam } from './params';
+import { Track, type SerializedTrack } from './track';
 
 export interface EngineJSON {
     version: number;
     volume: number;
     pan: number;
-    tracks: TrackJSON[];
+    tracks: SerializedTrack[];
 }
 
 class AudioEngine {
     static async fromJSON(context: AudioContext, data: EngineJSON): Promise<AudioEngine> {
         const engine = new AudioEngine();
-        engine.volume = data.volume;
-        engine.pan = data.pan;
+        engine.volume.value = data.volume;
+        engine.pan.value = data.pan;
         for (const trackData of data.tracks) {
             const track = await Track.fromJSON(context, trackData);
             engine.addTrack(track);
@@ -24,10 +24,10 @@ class AudioEngine {
     masterGain: GainNode;
     masterPan: StereoPannerNode;
 
-    private _state = createSignal('stopped');
-    private _volume = createSignal(1.0);
-    private _pan = createSignal(0.0);
-    private _tracks = createSignal<Track[]>([]);
+    volume = new UnitParam(1.0);
+    pan = new PolarParam(0.0);
+    state = new StringParam('stopped');
+    tracks = new Parameter<Track[]>([]);
     private _trackId = 0;
     private _startTime = 0;
 
@@ -38,92 +38,75 @@ class AudioEngine {
         this.masterPan.connect(this.masterGain);
         this.masterGain.connect(this.context.destination);
 
-        createEffect(() => (this.masterGain.gain.value = this._volume[0]()));
-        createEffect(() => (this.masterPan.pan.value = this._pan[0]()));
-    }
-
-    get state(): string {
-        return this._state[0]();
-    }
-
-    get volume(): number {
-        return this._volume[0]();
-    }
-    set volume(unit: number) {
-        this._volume[1](Math.min(Math.max(unit, 0.0), 1.0));
-    }
-
-    get pan(): number {
-        return this._pan[0]();
-    }
-    set pan(unit: number) {
-        this._pan[1](Math.min(Math.max(unit, -1.0), 1.0));
-    }
-
-    get tracks(): Track[] {
-        return this._tracks[0]();
+        this.volume.onChange((v) => (this.masterGain.gain.value = v));
+        this.pan.onChange((v) => (this.masterPan.pan.value = v));
     }
 
     get startTime(): number {
         return this._startTime;
     }
 
+    get elapsedTime(): number {
+        if (this.state.value === 'stopped') return 0;
+        return this.context.currentTime - this._startTime;
+    }
+
     toJSON(): EngineJSON {
         return {
             version: 1,
-            volume: this.volume,
-            pan: this.pan,
-            tracks: this.tracks.map((t) => t.toJSON()),
+            volume: this.volume.value,
+            pan: this.pan.value,
+            tracks: this.tracks.value.map((t) => t.toJSON()),
         };
     }
 
     async load(data: EngineJSON) {
         this.stop();
 
-        this.volume = data.volume;
-        this.pan = data.pan;
+        this.volume.value = data.volume;
+        this.pan.value = data.pan;
 
         const nextTracks: Track[] = [];
         for (const trackData of data.tracks) {
             const track = await Track.fromJSON(this.context, trackData);
             nextTracks.push(this.addTrack(track));
         }
-        this._tracks[1](nextTracks);
+        this.tracks.value = nextTracks;
 
-        if (this.state === 'playing') {
+        if (this.state.value === 'playing') {
             const now = this.context.currentTime;
-            this.tracks.forEach((t) => t.play(now));
+            this.tracks.value.forEach((t) => t.play(now));
         }
     }
 
     play() {
-        if (this.state === 'playing') return;
+        if (this.state.value === 'playing') return;
         this.context.resume().then(() => {
             const now = this.context.currentTime;
-            this.tracks.forEach((t) => t.play(now));
+            this.tracks.value.forEach((t) => t.play(now));
             this._startTime = now;
-            this._state[1]('playing');
+            this.state.value = 'playing';
         });
     }
 
     pause() {
-        if (this.state !== 'playing') return;
+        if (this.state.value !== 'playing') return;
         this.context.suspend();
-        this.tracks.forEach((t) => t.pause());
-        this._state[1]('paused');
+        this.tracks.value.forEach((t) => t.pause());
+        this.state.value = 'paused';
     }
 
     resume() {
-        if (this.state !== 'paused') return;
+        if (this.state.value !== 'paused') return;
         this.context.resume().then(() => {
             const now = this.context.currentTime;
-            this.tracks.forEach((t) => t.resume(now));
-            this._state[1]('playing');
+            this.tracks.value.forEach((t) => t.resume(now));
+            this.state.value = 'playing';
         });
     }
 
     toggleState() {
-        switch (this.state) {
+        switch (this.state.value) {
             case 'stopped':
                 this.play();
                 break;
@@ -137,18 +120,18 @@ class AudioEngine {
     }
 
     stop() {
-        this.tracks.forEach((t) => t.stop());
+        this.tracks.value.forEach((t) => t.stop());
         this._startTime = 0;
-        this._state[1]('stopped');
+        this.state.value = 'stopped';
     }
 
     getTrack(id: string) {
-        return this.tracks.find((t) => t.id === id);
+        return this.tracks.value.find((t) => t.id === id);
     }
 
     addTrack(track: Track): Track {
         track.output.connect(this.masterPan);
-        this._tracks[1]([...this._tracks[0](), track]);
+        this.tracks.value = [...this.tracks.value, track];
         return track;
     }
 
@@ -163,7 +146,7 @@ class AudioEngine {
         const track = this.getTrack(id);
         if (!track) return;
         track.destroy();
-        this._tracks[1](this._tracks[0]().filter((t) => t.id !== id));
+        this.tracks.value = this.tracks.value.filter((t) => t.id !== id);
     }
 }
-export const audioEngine = createRoot(() => new AudioEngine());
+export const audioEngine = new AudioEngine();

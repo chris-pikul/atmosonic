@@ -1,152 +1,158 @@
-import { createEffect, createRoot, createSignal, type Signal } from 'solid-js';
 import { LoopSampleSource, type Source } from './sources';
 import type { LoopSampleSourceJSON } from './sources/loop-sample';
+import type { Processor } from './processor';
+import { Gain, Panner } from './fx';
+import { BoolParam, PolarParam, RangeParam, UnitParam, type Range } from './params';
 
-export interface TrackJSON {
+export interface SerializedTrack {
     id: string;
     name: string;
     volume: number;
     pan: number;
-    initialDelay: [number, number];
+    initialDelay: Range;
     source?: LoopSampleSourceJSON;
 }
 
 export class Track {
-    static async fromJSON(context: AudioContext, data: TrackJSON): Promise<Track> {
+    static async fromJSON(context: AudioContext, data: SerializedTrack): Promise<Track> {
         const track = new Track(context, data.id, data.name);
-        track.volume = data.volume;
-        track.pan = data.pan;
-        track.initialDelay = data.initialDelay;
+        track.volume.value = data.volume;
+        track.panning.value = data.pan;
+        track.initialDelay.value = data.initialDelay;
 
-        if (data.source) {
-            if (data.source.type === 'loop') track.source = await LoopSampleSource.fromJSON(context, data.source);
-        }
         return track;
     }
 
-    id: string;
+    readonly id: string;
+    readonly context: AudioContext;
+
+    // The final output node of the track, it is a gain node that is used to adjust the volume of the track as a whole.
+    readonly output: GainNode;
+
+    private _source?: Source;
+    private _fx: Processor<any>[] = [];
+    private _gain: Gain;
+    private _pan: Panner;
+
     name: string;
-
-    context: AudioContext;
-    output: GainNode;
-    panNode: StereoPannerNode;
-    source?: Source;
-    dispose?: () => void;
-
-    // @ts-expect-error - initialized in constructor
-    private _volume: Signal<number>;
-    // @ts-expect-error - initialized in constructor
-    private _pan: Signal<number>;
-    // @ts-expect-error - initialized in constructor
-    private _isPlaying: Signal<boolean>;
-
-    /**
-     * When the engine itself starts, this declares the initial delay before the
-     * track source starts playing. It is a tuple of [start, end] in seconds. It
-     * is treated as a range, and the source will play for a random amount of time
-     * between the start (inclusive) and end (exclusive). If both values are the
-     * same, the source will play for the exact amount of time given, thus treating
-     * the values as a constant delay.
-     */
-    // @ts-expect-error - initialized in constructor
-    private _initialDelay: Signal<[number, number]>;
+    volume = new UnitParam(1.0);
+    panning = new PolarParam(0.0);
+    initialDelay = new RangeParam([0, 0]);
+    private _isPlaying = new BoolParam(false);
 
     constructor(ctx: AudioContext, id: string, name?: string) {
-        this.context = ctx;
         this.id = id;
-        this.name = name ?? `Track ${id}`;
+        this.context = ctx;
         this.output = this.context.createGain();
-        this.panNode = this.context.createStereoPanner();
-        this.panNode.connect(this.output);
+        this._gain = new Gain(this.context);
+        this._pan = new Panner(this.context);
 
-        this.dispose = createRoot((dispose) => {
-            this._volume = createSignal(1.0);
-            this._pan = createSignal(0.0);
-            this._isPlaying = createSignal(false);
-            this._initialDelay = createSignal([0, 0]);
+        this.name = name ?? `Track ${id}`;
 
-            createEffect(() => (this.output.gain.value = this._volume[0]()));
-            createEffect(() => (this.panNode.pan.value = this._pan[0]()));
-
-            return dispose;
-        });
+        this.volume.onChange((v) => (this._gain.params.gain.value = v));
+        this.panning.onChange((v) => (this._pan.params.pan.value = v));
     }
 
-    toJSON(): TrackJSON {
+    toJSON(): SerializedTrack {
         return {
             id: this.id,
             name: this.name,
-            volume: this.volume,
-            pan: this.pan,
-            initialDelay: this.initialDelay,
+            volume: this.volume.value,
+            pan: this.panning.value,
+            initialDelay: this.initialDelay.value,
         };
     }
 
-    get volume(): number {
-        return this._volume[0]();
-    }
-    set volume(unit: number) {
-        this._volume[1](Math.min(Math.max(unit, 0.0), 1.0));
-    }
-
-    get pan(): number {
-        return this._pan[0]();
-    }
-    set pan(unit: number) {
-        this._pan[1](Math.min(Math.max(unit, -1.0), 1.0));
-    }
-
     get isPlaying(): boolean {
-        return this._isPlaying[0]();
+        return this._isPlaying.value;
     }
 
-    get initialDelay(): [number, number] {
-        return this._initialDelay[0]();
+    get source(): Source | undefined {
+        return this._source;
     }
-    set initialDelay(seconds: number | [number, number]) {
-        this._initialDelay[1](typeof seconds === 'number' ? [seconds, seconds] : seconds);
+    set source(src: Source | null) {
+        this._source = src ?? undefined;
+        this.rebuildChain();
+    }
+
+    disconnect() {
+        this._source?.disconnect();
+        this._fx.forEach((fx) => fx.disconnect());
+        this._gain.disconnect();
+        this._pan.disconnect();
+    }
+
+    addFX(fx: Processor<any>) {
+        this._fx.push(fx);
+        this.rebuildChain();
+    }
+
+    removeFX(id: string) {
+        const fx = this._fx.find((fx) => fx.id === id);
+        if (fx) {
+            fx.disconnect();
+            this._fx = this._fx.filter((f) => f.id !== id);
+            this.rebuildChain();
+        }
+    }
+
+    private rebuildChain() {
+        // First, disconnect everything
+        this.disconnect();
+
+        // No source, no chain, there is nothing to generate audio.
+        if (!this._source) return;
+
+        // Chain them in order.
+        let last: AudioNode = this._source.output;
+        for (const fx of this._fx) {
+            last.connect(fx.input);
+            last = fx.output;
+        }
+
+        // Add fixed processors the chain last.
+        last.connect(this._gain.input);
+        this._gain.connect(this._pan.input);
+        this._pan.connect(this.output);
     }
 
     play(start: number) {
         if (!this.source) return;
-        const [min, max] = this.initialDelay;
+        const [min, max] = this.initialDelay.value;
         const delay = min === max ? min : min + Math.random() * (max - min);
         const startAt = start + delay;
         this.source.play(startAt);
-        this._isPlaying[1](true);
+        this._isPlaying.value = true;
     }
 
     pause() {
         if (!this.source) return;
         this.source.pause();
-        this._isPlaying[1](false);
+        this._isPlaying.value = false;
     }
 
     resume(start?: number) {
         if (!this.source) return;
         this.source.resume(start);
-        this._isPlaying[1](true);
+        this._isPlaying.value = true;
     }
 
     stop() {
         if (!this.source) return;
         this.source.stop();
-        this._isPlaying[1](false);
+        this._isPlaying.value = false;
     }
 
     destroy() {
-        this.dispose?.();
+        this.disconnect();
         this.output.disconnect();
-        this.panNode.disconnect();
     }
 
     setLoopSample(url: string) {
         this.source?.destroy();
 
         const src = new LoopSampleSource(this.context);
-        src.connect(this.panNode);
         this.source = src;
-
         src.load(url)
             .then(() => {})
             .catch((error) => {

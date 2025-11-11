@@ -1,42 +1,31 @@
-import { type Accessor, type Signal, createRoot, createSignal } from 'solid-js';
 import type { Source } from './source';
+import { Processor } from '../processor';
+import { BoolParam } from '../params';
 
-export abstract class SampleSource<P extends object> implements Source {
-    protected context: AudioContext;
-    protected gain: GainNode;
+export abstract class SampleSource<P extends object> extends Processor<P> implements Source<P> {
+    readonly input: GainNode;
+    readonly output: GainNode;
+
     protected node?: AudioBufferSourceNode;
     protected buffer?: AudioBuffer;
-    abstract readonly params: P;
 
-    // @ts-expect-error - initialized in constructor
-    protected _isLoaded: Signal<boolean>;
-    // @ts-expect-error - initialized in constructor
-    protected _isPlaying: Signal<boolean>;
-
+    abstract readonly type: string;
+    protected _isLoaded = new BoolParam(false);
+    protected _isPlaying = new BoolParam(false);
     protected _startTime = 0;
     protected _pauseTime = 0;
 
-    protected dispose?: () => void;
-
     constructor(context: AudioContext) {
-        this.context = context;
-        this.gain = this.context.createGain();
-        this.gain.gain.value = 1.0;
-
-        this.dispose = createRoot((dispose) => {
-            this._isLoaded = createSignal(false);
-            this._isPlaying = createSignal(false);
-
-            return dispose;
-        });
+        super(context);
+        this.input = this.output = this.context.createGain();
     }
 
-    get isLoaded(): Accessor<boolean> {
-        return this._isLoaded[0];
+    get isLoaded(): boolean {
+        return this._isLoaded.value;
     }
 
-    get isPlaying(): Accessor<boolean> {
-        return this._isPlaying[0];
+    get isPlaying(): boolean {
+        return this._isPlaying.value;
     }
 
     get elapsedTime(): number {
@@ -44,19 +33,25 @@ export abstract class SampleSource<P extends object> implements Source {
         return this.buffer ? elapsed % this.buffer.duration : elapsed;
     }
 
+    abstract fromJSON(data: object): void;
+    abstract toJSON(): object;
+
     async load(url: string) {
         const resp = await fetch(url);
         const buf = await resp.arrayBuffer();
         this.buffer = await this.context.decodeAudioData(buf);
-        this._isLoaded[1](true);
+        this._isLoaded.value = true;
+        console.log(`Loaded ${url} for source ${this.id}`);
     }
 
     connect(target: AudioNode) {
-        this.gain.connect(target);
+        this.output.connect(target);
+        console.log(`Connected ${this.id} to ${target.constructor.name}`);
     }
 
     disconnect() {
-        this.gain.disconnect();
+        this.output.disconnect();
+
         if (this.node) {
             try {
                 this.node?.stop();
@@ -64,6 +59,7 @@ export abstract class SampleSource<P extends object> implements Source {
             this.node?.disconnect();
             this.node = undefined;
         }
+        console.log(`Disconnected ${this.id}`);
     }
 
     play(start: number = 0, offset: number = 0): void {
@@ -71,12 +67,13 @@ export abstract class SampleSource<P extends object> implements Source {
 
         const src = this.context.createBufferSource();
         src.buffer = this.buffer;
-        src.connect(this.gain);
+        src.connect(this.output);
         src.start(start, offset);
 
         this.node = src;
         this._startTime = this.context.currentTime;
-        this._isPlaying[1](true);
+        this._isPlaying.value = true;
+        console.log(`Playing ${this.id} from ${start} with offset ${offset}`);
     }
 
     pause(): void {
@@ -89,11 +86,13 @@ export abstract class SampleSource<P extends object> implements Source {
         this.node = undefined;
 
         this._pauseTime = this.elapsedTime;
-        this._isPlaying[1](false);
+        this._isPlaying.value = false;
+        console.log(`Paused ${this.id}`);
     }
 
     resume(start?: number): void {
         this.play(start ?? this.context.currentTime, this._pauseTime);
+        console.log(`Resumed ${this.id} from ${start} with offset ${this._pauseTime}`);
     }
 
     stop(): void {
@@ -105,13 +104,14 @@ export abstract class SampleSource<P extends object> implements Source {
 
         this._startTime = 0;
         this._pauseTime = 0;
-        this._isPlaying[1](false);
+        this._isPlaying.value = false;
+        console.log(`Stopped ${this.id}`);
     }
 
     destroy(): void {
         this.stop();
         this.disconnect();
-        this.dispose?.();
         this.buffer = undefined;
+        console.log(`Destroyed ${this.id}`);
     }
 }

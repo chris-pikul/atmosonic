@@ -1,16 +1,15 @@
-import type { Accessor } from 'solid-js';
+import type { Processor } from '../processor';
 
-export interface Source<P extends object = object> {
-    readonly params: P;
-
-    connect(target: AudioNode): void;
-    disconnect(): void;
+export interface Source<P extends object = object> extends Processor<P> {
     play(start?: number): void;
     pause(): void;
     resume(start?: number): void;
     stop(): void;
     destroy(): void;
+
+    // Runtime statuses.
+    readonly type: string;
+    readonly isLoaded: boolean;
+    readonly isPlaying: boolean;
     readonly elapsedTime: number;
-    readonly isLoaded: Accessor<boolean>;
-    readonly isPlaying: Accessor<boolean>;
 }
