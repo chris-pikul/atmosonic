@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "modern-normalize": "^3.0.1",
     "solid-js": "^1.9.10"
   },
   "devDependencies": {
