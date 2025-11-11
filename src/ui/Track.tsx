@@ -2,7 +2,8 @@ import { audioEngine, type Track } from '@/audio';
 import { useParameter } from '@/audio/params';
 import type { LoopSampleSource } from '@/audio/sources';
 import { Match, Show, Switch } from 'solid-js';
-import { LoopSample } from './sources';
+import { LoopSample } from '@/ui/sources';
+import { StereoPeakMeter } from './StereoPeakMeter';
 
 export interface TrackProps {
     id: string;
@@ -73,6 +74,8 @@ export function TrackStrip(props: TrackProps) {
                     </Switch>
                 </div>
             </Show>
+
+            <StereoPeakMeter track={props.track} />
         </div>
     );
 }

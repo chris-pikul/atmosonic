@@ -26,7 +26,11 @@ export class Track {
     readonly id: string;
     readonly context: AudioContext;
 
-    // The final output node of the track, it is a gain node that is used to adjust the volume of the track as a whole.
+    readonly analyzer: AnalyserNode;
+    readonly analyzerL: AnalyserNode;
+    readonly analyzerR: AnalyserNode;
+
+    // The mix-down output gain node. From here it goes through analyzers and then to the final output.
     readonly output: GainNode;
 
     private _source?: Source;
@@ -43,7 +47,22 @@ export class Track {
     constructor(ctx: AudioContext, id: string, name?: string) {
         this.id = id;
         this.context = ctx;
+
+        this.analyzer = this.context.createAnalyser();
+        this.analyzerL = this.context.createAnalyser();
+        this.analyzerR = this.context.createAnalyser();
+
+        const merger = this.context.createChannelMerger(2);
+        this.analyzerL.connect(merger, 0, 0);
+        this.analyzerR.connect(merger, 0, 1);
+        merger.connect(this.analyzer);
+
         this.output = this.context.createGain();
+        const splitter = this.context.createChannelSplitter(2);
+        splitter.connect(this.analyzerL, 0);
+        splitter.connect(this.analyzerR, 1);
+        this.output.connect(splitter);
+
         this._gain = new Gain(this.context);
         this._pan = new Panner(this.context);
 
@@ -73,6 +92,10 @@ export class Track {
     set source(src: Source | null) {
         this._source = src ?? undefined;
         this.rebuildChain();
+    }
+
+    connect(target: AudioNode) {
+        this.analyzer.connect(target);
     }
 
     disconnect() {

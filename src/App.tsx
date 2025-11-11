@@ -1,6 +1,6 @@
 import './App.css';
-import { Tracks } from './components/Tracks';
-import { Transport } from './components/Transport';
+import { Tracks } from './ui/Tracks';
+import { Transport } from './ui/Transport';
 
 function App() {
     return (

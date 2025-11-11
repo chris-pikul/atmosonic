@@ -130,7 +130,7 @@ class AudioEngine {
     }
 
     addTrack(track: Track): Track {
-        track.output.connect(this.masterPan);
+        track.connect(this.masterPan);
         this.tracks.value = [...this.tracks.value, track];
         return track;
     }
